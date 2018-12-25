@@ -1,4 +1,4 @@
-let JSLOB = require('./index.js')
+let JSLOB = require('./index.js')()
 let assert = require('assert')
 
 async function test(description, fn){
@@ -14,7 +14,8 @@ async function test(description, fn){
 
 
 !async function(){
-	test("Complex Object Structure", async ()=>{
+
+	await test("Complex Object Structure", async ()=>{
 		let json = `{
 				"a":1,
 				"meta":{
@@ -35,5 +36,21 @@ async function test(description, fn){
 			'Does not match!'
 			)
 		})
-		
+
+	await test("Multiple objects in store", async () => {
+		let jsonA = '{"a":1}'
+		let jsonB = '{"b":2}'
+		let jslobA = await JSLOB.stringify( await JSLOB.parse(jsonA))
+		let jslobB = await JSLOB.stringify( await JSLOB.parse(jsonB))
+		assert.deepStrictEqual(
+			JSON.parse(jslobA),
+			JSON.parse(jsonA),
+			'A does not match!'
+			)
+		assert.deepStrictEqual(
+			JSON.parse(jslobB),
+			JSON.parse(jsonB),
+			'B does not match!'
+			)
+		})
 	}()

@@ -1,0 +1,30 @@
+{
+  "name": "jslob",
+  "version": "0.0.1",
+  "description": "JS Large OBject - The lazy way to work with JSON that won't fit in memory",
+  "main": "index.js",
+  "dependencies": {
+    "jsonparse": "^1.3.1",
+    "level": "^4.0.0"
+  },
+  "devDependencies": {},
+  "scripts": {
+    "test": "node test.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/fabiocbinbutter/jslob.git"
+  },
+  "keywords": [
+    "JSON",
+    "disk",
+    "memory",
+    "streaming"
+  ],
+  "author": "Fabio Beltramini",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/fabiocbinbutter/jslob/issues"
+  },
+  "homepage": "https://github.com/fabiocbinbutter/jslob#readme"
+}
