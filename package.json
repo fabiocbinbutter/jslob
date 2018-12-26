@@ -1,6 +1,6 @@
 {
   "name": "jslob",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "JS Large OBject - The lazy way to work with JSON that won't fit in memory",
   "main": "index.js",
   "dependencies": {
