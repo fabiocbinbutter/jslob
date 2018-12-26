@@ -5,19 +5,34 @@ const {Readable,Transform} = require('stream')
 
 let globalId = 1
 
+let defaultLevel = require('leveldown')
+let defaultPath = path.resolve(os.tmpdir(),'./jslob-'+Date.now()+'-'+Math.floor(Math.random()*100))
+
 const _store = Symbol()
 const _JslobId = Symbol()
+
+const proxyDef = {
+	get: async function get(that,prop,receiver){
+		if(typeof prop == 'symbol'){return that[prop]}
+		let store = that[_store]
+		let id = that[_JslobId]
+		let path = typeof prop == number ? ':'+prop : '/'+prop
+		await JSLOB.get(that,path)
+		return 'TODO'
+		}
+	}
 
 class Jslob {
 	constructor (store,id){
 		this[_store] = store
 		this[_JslobId] = id
+		//return new Proxy(this,proxyDef)
 		}
 	}
 
 exports = module.exports = function JSLOB_Factory({
-	leveldown = require('leveldown'),
-	storepath = path.resolve(os.tmpdir(),'./jslob-'+Date.now()+'-'+Math.floor(Math.random()*100))
+	leveldown = defaultLevel,
+	storepath = defaultPath
 	} = {})
 	{
 	const level = require('level-packager')(leveldown)
@@ -45,6 +60,7 @@ exports = module.exports = function JSLOB_Factory({
 					: typeof s.key == 'number' ? ':'+s.key //TODO: ensure string sorting for e.g., 9, 10
 					: '/'+s.key )
 				.join("")
+				+'\0'
 			for(let s of stack){
 				delete s.value
 				}
@@ -58,6 +74,19 @@ exports = module.exports = function JSLOB_Factory({
 		return new Jslob(store, id)
 		}
 
+	JSLOB._get = async function JSLOB_get(jslob,path){
+		let id = jslob[_JslobId]
+		let store = jslob[_store]
+		let pathend = path.slice(-1)+String.fromCharCode(path.charCodeAt(path.length-1) + 1)
+		let read = store.createReadStream({
+				gte: id+path+'\0',
+				lt: id+pathend+'\0'
+				})
+			.on("data", d=>
+				console.log(d.key,": ",d.value)
+				)
+		await streamEnd(read)
+		}
 	JSLOB.streamify = function streamify(jslob){
 		let lastPath = []
 		let xf = new Transform({
@@ -66,7 +95,8 @@ exports = module.exports = function JSLOB_Factory({
 			transform: function jslobOutputTransform(data, encoding, cb){
 				//e.g.	data.key -> "#1/rows:1/foo"
 				let path = data.key
-					.replace(/^\d+#/,"")
+					.slice(0,-1) //Drop null char at end
+					.replace(/^\d+/,"")
 					.match(/(:\d+|\/[^/:]*(\\[:\/][^/:]*)*)(?=$|\/|:)/g)
 				let delims = getDelimiters(lastPath,path)
 				lastPath = path
@@ -79,8 +109,8 @@ exports = module.exports = function JSLOB_Factory({
 		let id = jslob[_JslobId]
 		return jslob[_store]
 			.createReadStream({
-				gte: id+'#',
-				lt: (1+id)+'#'
+				gte: id+'\0',
+				lt: (1+id)+'\0'
 				})
 			.pipe(xf)
 

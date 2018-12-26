@@ -1,5 +1,7 @@
-let JSLOB = require('./index.js')()
+let JSLOB = require('../index.js')()
 let assert = require('assert')
+let path = require('path')
+let fs = require('fs')
 
 async function test(description, fn){
 	console.log(description)
@@ -53,4 +55,18 @@ async function test(description, fn){
 			'B does not match!'
 			)
 		})
+
+	await test("Stream in", async () => {
+		let filepath = path.resolve(__dirname,'./sample.json')
+		let json = fs.readFileSync(filepath)
+		let jsonStream = fs.createReadStream(filepath)
+		let jslob = await JSLOB.parse(jsonStream)
+
+		assert.deepStrictEqual(
+			JSON.parse(await JSLOB.stringify(jslob)),
+			JSON.parse(json),
+			'Streaming did not work as expected'
+			)
+		})
+
 	}()
