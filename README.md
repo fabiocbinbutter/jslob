@@ -6,7 +6,7 @@
 
 ### Usage
 
-```
+```js
 const JSLOB = require('jslob')()
 
 !async function smallExample(){
@@ -18,7 +18,7 @@ const JSLOB = require('jslob')()
 !async function bigExample(){
 	let jslob = await JSLOB.parse(fs.createReadStream('package.json'))
 	JSLOB.streamify(jslob).on(chunk=>console.log(chunk))
-	}
+	}()
 ```
 
 ### Features / API

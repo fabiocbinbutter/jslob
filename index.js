@@ -3,42 +3,54 @@ const path = require('path')
 const JsonParser = require('jsonparse')
 const {Readable,Transform} = require('stream')
 
-let globalId = 1
+const {arrayMarker,keyEncode,keyDecode,keyRangeEnd,propertyEncode,propertyDecode} = require('./lib/key-encoding.js')
 
-let defaultLevel = require('leveldown')
+let globalId = 1
+let defaultLeveldown = require('leveldown')
 let defaultPath = path.resolve(os.tmpdir(),'./jslob-'+Date.now()+'-'+Math.floor(Math.random()*100))
 
 const _store = Symbol()
 const _JslobId = Symbol()
 
-const proxyDef = {
-	get: async function get(that,prop,receiver){
-		if(typeof prop == 'symbol'){return that[prop]}
-		let store = that[_store]
-		let id = that[_JslobId]
-		let path = typeof prop == number ? ':'+prop : '/'+prop
-		await JSLOB.get(that,path)
-		return 'TODO'
-		}
-	}
 
-class Jslob {
-	constructor (store,id){
-		this[_store] = store
-		this[_JslobId] = id
-		//return new Proxy(this,proxyDef)
-		}
+_JSLOB = {}
+_JSLOB.getStore = function _JSLOB_getStore(jslob){
+	return jslob[_store]
+	}
+_JSLOB.getId = function _JSLOB_getId(jslob){
+	return jslob[_JslobId]
 	}
 
 exports = module.exports = function JSLOB_Factory({
-	leveldown = defaultLevel,
+	leveldown = defaultLeveldown,
 	storepath = defaultPath
 	} = {})
 	{
 	const level = require('level-packager')(leveldown)
 	const store = level(storepath)
-
 	const JSLOB = {}
+
+	const proxyDef = {
+		get: /*usually async */ function get(that,prop,receiver){
+			if(typeof prop == 'symbol'){return that[prop]}
+			let store = _JSLOB.getStore(that)
+			let id = _JSLOB.getId(that)
+			let path = [prop]
+			return JSLOB.get(that,path)
+			}
+		}
+
+	function Jslob (store,id){
+		let jslob = {}
+		jslob[_store] = store
+		jslob[_JslobId] = id
+		//stores.set(jslob,store)
+		//ids.set(jslob,store)
+		return new Proxy(jslob,proxyDef)
+		// CONTINUE HERE
+		//^ seems to be subtly breaking my elaborate web of store retrieval... :-/
+		}
+
 	JSLOB.parse = async function JSLOB_parse(str){
 		let id = globalId++
 		let stream
@@ -54,101 +66,122 @@ exports = module.exports = function JSLOB_Factory({
 		let latestPut
 		jsonparser.onValue = function(value) {
 			let stack = this.stack.concat(this)
-			let path = id+'#'
-				+ stack.map(s =>
-					s.key==undefined ? ''
-					: typeof s.key == 'number' ? ':'+s.key //TODO: ensure string sorting for e.g., 9, 10
-					: '/'+s.key )
-				.join("")
-				+'\0'
+			let path = stack.map(s=>s.key).filter(p=>p!==undefined)
+			//console.log([id, ...path])
+			let key = keyEncode([id, ...path])
 			for(let s of stack){
 				delete s.value
 				}
+			if(this.key===0){
+				store.put(arrayMarker([id,...path]),'[]')
+				}
 			if(value !== undefined){
-				latestPut = store.put(path, JSON.stringify(value))
+
+				latestPut = store.put(key, JSON.stringify(value))
 				}
 			}
 		stream.on('data',function(d){jsonparser.write(d)})
 		await streamEnd(stream)
 		await latestPut
-		return new Jslob(store, id)
+		//jsonparser.onValue = null //Maybe unnecessary?
+		let jslob = Jslob(store, id)
+		return jslob
 		}
 
-	JSLOB._get = async function JSLOB_get(jslob,path){
-		let id = jslob[_JslobId]
-		let store = jslob[_store]
-		let pathend = path.slice(-1)+String.fromCharCode(path.charCodeAt(path.length-1) + 1)
-		let read = store.createReadStream({
-				gte: id+path+'\0',
-				lt: id+pathend+'\0'
+	JSLOB.get = async function JSLOB_get(jslob,path){
+		let id = await _JSLOB.getId(jslob)
+		let store = await _JSLOB.getStore(jslob)
+		if(typeof path == "string"){
+			path = keyDecode('!#'+id+path+'/').path
+			}
+		let key = keyEncode([id, ...path])
+		let hit = false
+		let value
+		let range = {
+			gte: key,
+			lt: keyRangeEnd([id, ...path])
+			}
+		let read = store.createReadStream(range)
+			.on("data", d=> {
+				hit = true
+				if(d.key === key){
+					value = tryJsonParse(d.value,d.value)
+					}
 				})
-			.on("data", d=>
-				console.log(d.key,": ",d.value)
-				)
 		await streamEnd(read)
+		if(value !== undefined){
+			return value
+			}
+		if(hit){
+			return "TODO: Some kind of recursive/prefixed Proxy"
+			}
+		return undefined
 		}
+
 	JSLOB.streamify = function streamify(jslob){
-		let lastPath = []
+		let lastStack = []
 		let xf = new Transform({
-			writableObjectMode: true,
-			readableObjectMode: true,
-			transform: function jslobOutputTransform(data, encoding, cb){
-				//e.g.	data.key -> "#1/rows:1/foo"
-				let path = data.key
-					.slice(0,-1) //Drop null char at end
-					.replace(/^\d+/,"")
-					.match(/(:\d+|\/[^/:]*(\\[:\/][^/:]*)*)(?=$|\/|:)/g)
-				let delims = getDelimiters(lastPath,path)
-				lastPath = path
-				cb(null/*err*/, delims + data.value)
+			objectMode: true,
+			transform: (data, encoding, cb) => {
+				let key = keyDecode(data.key)
+				let nextPath = key.path
+				let out = []
+				let ptr = 0
+				let changeIndex = 0
+
+				//e.g.	lastPath ->	["/meta",	"/totalRows"]
+				//e.g.	nextPath -> ["/rows",	"1",		"/foo"]
+				if(lastStack.length){ /* This section closes out objects and arrays*/
+					for( ptr = 0; ptr < lastStack.length; ptr++){
+						if(nextPath[ptr] !== lastStack[ptr].prop ){break}
+						}
+					changeIndex = ptr //e.g., -1 in the above example
+					for(ptr = lastStack.length-1; ptr > changeIndex ; ptr--){
+						out.push(closing(lastStack.pop()))
+						}
+					}
+				if( lastStack.length &&  nextPath.length){out.push(',')}
+				if( lastStack.length && !nextPath.length){out.push(closing(lastStack[0]))}
+				if(!lastStack.length &&  nextPath.length){
+					out.push(opening({
+						prop: nextPath[0],
+						isArray: key.isArrayMarker && key.path.length==1
+						}))
+					}
+				if( nextPath.length){
+					for(ptr = changeIndex; ptr < nextPath.length; ptr++){
+						let item = {
+							prop:nextPath[ptr],
+							isArray: key.isArrayMarker && ptr === key.path.length-1,
+							isObject: ptr < key.path.length-1
+							}
+						out.push(getJsonKey(nextPath[ptr]))
+						out.push(opening(item))
+						lastStack.push(item)
+						}
+					}
+				if(!key.isArrayMarker){out.push(data.value)}
+				console.log(out.join(''))
+				cb(null, out.join(''))
 				},
-			flush: function(cb){
-				cb(null, getDelimiters(lastPath,[]))
-				}
+			flush: cb => cb(null, "..."/*getDelimiters(lastPath,[])*/)
 			})
-		let id = jslob[_JslobId]
-		return jslob[_store]
+		let id = _JSLOB.getId(jslob)
+		let store = _JSLOB.getStore(jslob)
+		return store
 			.createReadStream({
-				gte: id+'\0',
-				lt: (1+id)+'\0'
+				gte: keyEncode([id]),
+				lt: keyRangeEnd([id])
 				})
 			.pipe(xf)
 
-		function getDelimiters(lastPath,nextPath){
-			let out = []
-			let ptr = 0
-			let changeIndex = 0
-			//e.g.	lastPath ->	["/meta",	"/totalRows"]
-			//e.g.	nextPath -> ["/rows",	"1",		"/foo"]
-			//console.log(lastPath)
-			//console.log(nextPath)
-			if(lastPath.length){ /* This section closes out objects and arrays*/
-				for( ptr = 0; ptr < lastPath.length; ptr++){
-					if(nextPath[ptr] !== lastPath[ptr]){break}
-					}
-				changeIndex = ptr //e.g., -1 in the above example
-				for(ptr = lastPath.length-1; ptr > changeIndex ; ptr--){
-					out.push(closing(lastPath[ptr]))
-					}
-				}
-			if(!lastPath.length &&  nextPath.length){out.push(opening(nextPath[0]))}
-			if( lastPath.length &&  nextPath.length){out.push(',')}
-			if( lastPath.length && !nextPath.length){out.push(closing(lastPath[0]))}
-			if(nextPath.length){
-				out.push(getKeyString(nextPath[ptr]))
-				for(ptr = changeIndex+1; ptr < nextPath.length; ptr++){
-					out.push(opening(nextPath[ptr]))
-					out.push(getKeyString(nextPath[ptr]))
-					}
-				}
-			return out.join('')
+		function opening(item){return item.isArray ? '[' : item.isObject ? '{' : ''}
+		function closing(item){return item.isArray ? ']' : item.isObject ? '}' : ''}
+		function getJsonKey(prop){
+			if(typeof prop == "number"){return ''}
+			return JSON.stringify(prop)+":"
 			}
-		function opening(key){return key[0]===':' ? '[' : '{'}
-		function closing(key){return key[0]===':' ? ']' : '}'}
-		function getKeyString(pathpart){
-			if(!pathpart || pathpart[0]===':'){return ''}
-			return JSON.stringify(pathpart.slice(1).replace(/\\./g,pair=>pair[1]))+":"
-			}
+
 		}
 
 	JSLOB.stringify = async function stringify(jslob){
@@ -158,13 +191,33 @@ exports = module.exports = function JSLOB_Factory({
 		}
 	JSLOB.log = function(jslob,limit = 10){
 		let counter = 0
-		JSLOB.streamify(jslob).on('data', d => {
-			if(counter<limit){console.log(d)}
-			if(counter==limit){console.log("...")}
-			counter++
-			})
+		let id, logStore, range
+		if(jslob){
+			id = _JSLOB.getId(jslob)
+			logStore = _JSLOB.getStore(jslob)
+			range = {
+				gte: keyEncode([id]),
+				lt: keyRangeEnd([id])
+				}
+			console.log(`Logging from ${range.gte} to ${range.lt} ...`)
+			}
+		else {
+			logStore = store
+			range = {}
+			console.log(`Logging all...`)
+			}
+		return new Promise(res => store
+			.createReadStream(range)
+			.on('data', d => {
+				if(counter<limit){console.log(d)}
+				if(counter==limit){console.log("..."); res()}
+				counter++
+				})
+			.on('end',res)
+			)
 		}
 	return JSLOB
 	}
 
 function streamEnd(stream){ return new Promise(res => stream.on('end',res))}
+function tryJsonParse(str,dft){try{return JSON.parse(str)}catch(e){return dft}}
