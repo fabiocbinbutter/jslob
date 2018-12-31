@@ -67,20 +67,22 @@ exports = module.exports = function JSLOB_Factory({
 		jsonparser.onValue = function(value) {
 			let stack = this.stack.concat(this)
 			let path = stack.map(s=>s.key).filter(p=>p!==undefined)
-			//console.log([id, ...path])
 			let key = keyEncode([id, ...path])
 			for(let s of stack){
 				delete s.value
 				}
 			if(this.key===0){
-				store.put(arrayMarker([id,...path]),'[]')
+				store.put(arrayMarker([id,...path]),'[')
 				}
+			//TODO: Maybe fix test case "Overlapping properties (arr to obj)"
 			if(value !== undefined){
-
 				latestPut = store.put(key, JSON.stringify(value))
 				}
 			}
-		stream.on('data',function(d){jsonparser.write(d)})
+		stream
+			.on('data',function(d){jsonparser.write(d)})
+			.on('end',function(d){jsonparser.write("\n")})
+			//^Otherwise jsonparse can't know that a number-only input has ended
 		await streamEnd(stream)
 		await latestPut
 		//jsonparser.onValue = null //Maybe unnecessary?
@@ -124,48 +126,71 @@ exports = module.exports = function JSLOB_Factory({
 			objectMode: true,
 			transform: (data, encoding, cb) => {
 				let key = keyDecode(data.key)
-				let nextPath = key.path
-				let out = []
-				let ptr = 0
-				let changeIndex = 0
-
-				//e.g.	lastPath ->	["/meta",	"/totalRows"]
-				//e.g.	nextPath -> ["/rows",	"1",		"/foo"]
-				if(lastStack.length){ /* This section closes out objects and arrays*/
-					for( ptr = 0; ptr < lastStack.length; ptr++){
-						if(nextPath[ptr] !== lastStack[ptr].prop ){break}
-						}
-					changeIndex = ptr //e.g., -1 in the above example
-					for(ptr = lastStack.length-1; ptr > changeIndex ; ptr--){
-						out.push(closing(lastStack.pop()))
-						}
-					}
-				if( lastStack.length &&  nextPath.length){out.push(',')}
-				if( lastStack.length && !nextPath.length){out.push(closing(lastStack[0]))}
-				if(!lastStack.length &&  nextPath.length){
-					out.push(opening({
-						prop: nextPath[0],
-						isArray: key.isArrayMarker && key.path.length==1
-						}))
-					}
-				if( nextPath.length){
-					for(ptr = changeIndex; ptr < nextPath.length; ptr++){
-						let item = {
-							prop:nextPath[ptr],
-							isArray: key.isArrayMarker && ptr === key.path.length-1,
-							isObject: ptr < key.path.length-1
-							}
-						out.push(getJsonKey(nextPath[ptr]))
-						out.push(opening(item))
-						lastStack.push(item)
-						}
-					}
-				if(!key.isArrayMarker){out.push(data.value)}
-				console.log(out.join(''))
-				cb(null, out.join(''))
+				let {output,newStack} = stackTransition(lastStack,key.path,data.value,key.isArrayMarker)
+				lastStack = newStack
+				cb(null, output)
 				},
-			flush: cb => cb(null, "..."/*getDelimiters(lastPath,[])*/)
+			flush: cb => cb(null, stackTransition(lastStack,[]).output)
 			})
+		function stackTransition(oldStack,newPath,valueJson,isArrayMarker){
+			let newStack = [],
+				oldLen = oldStack.length,
+				newLen = newPath.length,
+				out = [],
+				ptr = 0,
+				changeIndex = 0,
+				rootProp = oldLen ? oldStack[0].prop : newPath[0]
+
+			//Matching stack parts
+			for( ptr = 0; ptr < oldLen; ptr++){
+				if(newPath[ptr] === oldStack[ptr].prop ){
+					newStack[ptr] = oldStack[ptr]
+					continue
+					}
+				break
+				}
+			//Note the index at which they diverge
+			changeIndex = ptr
+			//Close out arrays and objects
+			for(ptr = oldLen-1; ptr > changeIndex - 1 ; ptr--){
+				out.push(
+					lastStack[ptr].isArray ?']':
+					lastStack[ptr].isObject?'}':
+					''
+					)
+				}
+			//Insert comma if necessary
+			if(oldLen>changeIndex && newLen){
+				out.push(',')
+				}
+			//Add new parts to the new stack
+			for(ptr = changeIndex; ptr < newLen; ptr++){
+				let isArray = ptr === newLen-1 && isArrayMarker
+				let isObject = ptr < newLen-1
+				let prop = newPath[ptr]
+				newStack[ptr] = {prop,isArray, isObject}
+				if(ptr>0 && !newStack[ptr-1].isArray){
+					out.push(JSON.stringify(''+prop)+":")
+					}
+				if(isArray){out.push('[')}
+				if(isObject){out.push('{')}
+				}
+			if(!isArrayMarker && valueJson!==undefined){
+				out.push(valueJson)
+				}
+
+
+
+
+
+			{ /* this section opens object and arrays and keys */
+
+				}
+			return {
+				output: out.join(''),
+				newStack
+				}
+			}
 		let id = _JSLOB.getId(jslob)
 		let store = _JSLOB.getStore(jslob)
 		return store
@@ -174,14 +199,6 @@ exports = module.exports = function JSLOB_Factory({
 				lt: keyRangeEnd([id])
 				})
 			.pipe(xf)
-
-		function opening(item){return item.isArray ? '[' : item.isObject ? '{' : ''}
-		function closing(item){return item.isArray ? ']' : item.isObject ? '}' : ''}
-		function getJsonKey(prop){
-			if(typeof prop == "number"){return ''}
-			return JSON.stringify(prop)+":"
-			}
-
 		}
 
 	JSLOB.stringify = async function stringify(jslob){
