@@ -18,7 +18,7 @@ const JSLOB = require('jslob')()
 
 !async function bigExample(){
 	let jslob = await JSLOB.parse(fs.createReadStream('package.json'))
-	console.log(await jslob.name)
+	console.log(await jslob.dependencies.jslob)
 	JSLOB.streamify(jslob).on("data",chunk=>console.log(chunk))
 	}()
 ```
@@ -31,8 +31,9 @@ const JSLOB = require('jslob')()
 |Parse Stream | Parse a (potentially huge) JSON stream | Working | await JSLOB.parse(readable) |
 |String Out | String out JSON from a JSLOB | Working | await JSLOB.stringify(jslob) |
 |Stream Out | Stream out JSON from a JSLOB | Working | JSLOB.streamify(jslob) |
-|Getters | Transparently get properties | Partial | jslob.foo //bar |
+|Getters | Transparently get properties | Working | jslob.foo //bar |
 |Setters | Transparently set properties | TODO | jslob.foo = "baz" |
+|Iterators+ | Enumerate, iterate, splat, etc | TODO | JSLOB.entries(jslob) & more |
 |Destroy | Manually clean up expired objects | TODO | JSLOB.del(jslob) |
 |GC | Automatically clean up expired objects | [Not currently  possible](https://github.com/tc39/proposal-weakrefs/issues/55) | N/A |
 |Storage | Use any leveldown-compliant storage | Untested | const JSLOB = require('jslob')({leveldown:...}) |

@@ -16,6 +16,29 @@ async function test(description, fn){
 
 
 !async function(){
+
+
+	await test("Get > Basic property access", async ()=>{
+		let str = '{"foo":true}'
+		let jslob = await JSLOB.parse(str)
+		let json = JSON.parse(str)
+		assert.strictEqual(await jslob.bar,json.bar,	'.bar should be undefined')
+		assert.strictEqual(await jslob.foo,json.foo,	'.foo should be true')
+		assert.strictEqual(await jslob.fo, json.fo, 	'.fo should be undefined')
+		assert.strictEqual(await jslob.fooo,json.fooo,	'.fooo should be undefined')
+		})
+
+	await test("Get > Nested property access", async ()=>{
+		let str = '{"foo":{"bar":0}}'
+		let jslob = await JSLOB.parse(str)
+		let json = JSON.parse(str)
+		assert.strictEqual(await jslob.foo.bar,json.foo.bar, '.foo.bar should be set')
+		assert.strictEqual(await jslob.foo.bat,json.foo.bat, '.foo.bat should not be set')
+
+		})
+
+	return
+
 	await test("Roundtrip > String", async ()=>{
 		await roundtrip(`"42"`)
 		})
@@ -157,6 +180,17 @@ async function test(description, fn){
 		assert.strictEqual(await jslob["01"],json["01"],'["01"] should be undefined')
 		})
 
+
+	await test("Get > Nested property access", async ()=>{
+		let str = '{"foo":{"bar":0}}'
+		let jslob = await JSLOB.parse(str)
+		let json = JSON.parse(str)
+		//await JSLOB.log(jslob)
+		let expected = json.foo.bar
+		let actual = await jslob.foo.bar
+		assert.strictEqual(actual,expected, '.foo.bar should be set')
+
+		})
 
 
 	await test("Stream in", async () => {

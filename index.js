@@ -1,5 +1,3 @@
-const os = require('os')
-const path = require('path')
 const JsonParser = require('jsonparse')
 const {Readable,Transform} = require('stream')
 
@@ -7,60 +5,105 @@ const {arrayMarker,keyEncode,keyDecode,keyRangeEnd,propertyEncode,propertyDecode
 
 let globalId = 1
 let defaultLeveldown = require('leveldown')
-let defaultPath = path.resolve(os.tmpdir(),'./jslob-'+Date.now()+'-'+Math.floor(Math.random()*100))
-
+let defaultLevelPath; {
+	let os = require('os')
+	let  pathModule = require('path')
+	defaultLevelPath = pathModule.resolve(os.tmpdir(),'./jslob-'+Date.now()+'-'+Math.floor(Math.random()*100))
+	}
 const _store = Symbol()
-const _JslobId = Symbol()
+const _jslobPath = Symbol()
 
 
 _JSLOB = {}
 _JSLOB.getStore = function _JSLOB_getStore(jslob){
 	return jslob[_store]
 	}
-_JSLOB.getId = function _JSLOB_getId(jslob){
-	return jslob[_JslobId]
+_JSLOB.getPath = function _JSLOB_getId(jslob){
+	return jslob[_jslobPath]
+	}
+_JSLOB.get = async function JSLOB_get(store,path){
+	//TODO: Expose a public version of _JSLOB.get with auto-prefixing & string-based path
+	let key = keyEncode(path)
+	let hit = false
+	let value
+	let range = {
+		gte: key,
+		lt: keyRangeEnd(path)
+		}
+	let read = store.createReadStream(range)
+		.on("data", d=> {
+			hit = true
+			if(d.key === key){
+				value = tryJsonParse(d.value,d.value)
+				}
+			})
+	await streamEnd(read)
+	//let promise = streamEnd(read).then( () => {
+		if(value !== undefined){
+			return value
+			}
+		if(hit){
+			return Jslob(store,path)
+			}
+		return undefined
+	//	})
+	//return Jslob(store,path,promise)
+	}
+
+const proxyDef = {
+	get: /*usually async */ function get(that,prop,receiver){
+		if(typeof prop == 'symbol'){return that[prop]}
+		if(that instanceof Promise){
+			if(prop == 'then'){return that.then.bind(that)}
+			return that.then(val => val == undefined ? undefined : val[prop])
+			}
+		let store = _JSLOB.getStore(that)
+		let path = _JSLOB.getPath(that).concat(prop)
+		return Jslob(
+			store,
+			path,
+			_JSLOB.get(store,path)
+			)
+		}
+	}
+function Jslob (store, path, base){
+	let jslob = base || {}
+	if(typeof path[0] !== "number"){
+		throw new Error("Jslob id must be numeric")
+		}
+	jslob[_store] = store
+	jslob[_jslobPath] = path
+	return new Proxy(jslob,proxyDef)
 	}
 
 exports = module.exports = function JSLOB_Factory({
 	leveldown = defaultLeveldown,
-	storepath = defaultPath
+	levelPath = defaultLevelPath
 	} = {})
 	{
-	const level = require('level-packager')(leveldown)
-	const store = level(storepath)
+	//const level = require('level-packager')(leveldown)
+	//const closureStore = level(storepath)
+	const closureStore = require('level-packager')(leveldown)(levelPath)
 	const JSLOB = {}
 
-	const proxyDef = {
-		get: /*usually async */ function get(that,prop,receiver){
-			if(typeof prop == 'symbol'){return that[prop]}
-			let store = _JSLOB.getStore(that)
-			let id = _JSLOB.getId(that)
-			let path = [prop]
-			return JSLOB.get(that,path)
-			}
-		}
 
-	function Jslob (store,id){
-		let jslob = {}
-		jslob[_store] = store
-		jslob[_JslobId] = id
-		//stores.set(jslob,store)
-		//ids.set(jslob,store)
-		return new Proxy(jslob,proxyDef)
-		// CONTINUE HERE
-		//^ seems to be subtly breaking my elaborate web of store retrieval... :-/
-		}
 
 	JSLOB.parse = async function JSLOB_parse(str){
+		let store = closureStore
 		let id = globalId++
 		let stream
 		if(str instanceof Readable){
 			stream = str
 			}
 		else if (typeof str == 'string'){
+			//TODO: ^ Accept boxed strings
 			stream = new Readable
 			stream.push(str)
 			stream.push(null)
+			}
+		else{
+			//TODO: Accept JSON objects
+			throw new Error("JSLOB.parse accepts a string or Readable stream")
 			}
 		let jsonparser = new JsonParser()
 		let latestPut
@@ -86,38 +129,8 @@ exports = module.exports = function JSLOB_Factory({
 		await streamEnd(stream)
 		await latestPut
 		//jsonparser.onValue = null //Maybe unnecessary?
-		let jslob = Jslob(store, id)
+		let jslob = Jslob(store, [id])
 		return jslob
-		}
-
-	JSLOB.get = async function JSLOB_get(jslob,path){
-		let id = await _JSLOB.getId(jslob)
-		let store = await _JSLOB.getStore(jslob)
-		if(typeof path == "string"){
-			path = keyDecode('!#'+id+path+'/').path
-			}
-		let key = keyEncode([id, ...path])
-		let hit = false
-		let value
-		let range = {
-			gte: key,
-			lt: keyRangeEnd([id, ...path])
-			}
-		let read = store.createReadStream(range)
-			.on("data", d=> {
-				hit = true
-				if(d.key === key){
-					value = tryJsonParse(d.value,d.value)
-					}
-				})
-		await streamEnd(read)
-		if(value !== undefined){
-			return value
-			}
-		if(hit){
-			return "TODO: Some kind of recursive/prefixed Proxy"
-			}
-		return undefined
 		}
 
 	JSLOB.streamify = function streamify(jslob){
@@ -191,12 +204,12 @@ exports = module.exports = function JSLOB_Factory({
 				newStack
 				}
 			}
-		let id = _JSLOB.getId(jslob)
+		let path = _JSLOB.getPath(jslob)
 		let store = _JSLOB.getStore(jslob)
 		return store
 			.createReadStream({
-				gte: keyEncode([id]),
-				lt: keyRangeEnd([id])
+				gte: keyEncode(path),
+				lt: keyRangeEnd(path)
 				})
 			.pipe(xf)
 		}
@@ -208,18 +221,18 @@ exports = module.exports = function JSLOB_Factory({
 		}
 	JSLOB.log = function(jslob,limit = 10){
 		let counter = 0
-		let id, logStore, range
+		let store, path, range
 		if(jslob){
-			id = _JSLOB.getId(jslob)
-			logStore = _JSLOB.getStore(jslob)
+			path = _JSLOB.getPath(jslob)
+			store = _JSLOB.getStore(jslob)
 			range = {
-				gte: keyEncode([id]),
-				lt: keyRangeEnd([id])
+				gte: keyEncode(path),
+				lt: keyRangeEnd(path)
 				}
 			console.log(`Logging from ${range.gte} to ${range.lt} ...`)
 			}
 		else {
-			logStore = store
+			store = closureStore
 			range = {}
 			console.log(`Logging all...`)
 			}
