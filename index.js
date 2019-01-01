@@ -53,7 +53,7 @@ _JSLOB.get = async function JSLOB_get(store,path){
 const proxyDef = {
 	get: /*usually async */ function get(that,prop,receiver){
 		if(typeof prop == 'symbol'){return that[prop]}
-		if(that instanceof Promise){
+		if(typeof that[prop] == "function"){
 			if(prop == 'then'){return that.then.bind(that)}
 			return that.then(val => val == undefined ? undefined : val[prop])
 			}
