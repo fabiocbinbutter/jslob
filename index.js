@@ -4,7 +4,7 @@ const {Readable,Transform} = require('stream')
 const {arrayMarker,keyEncode,keyDecode,keyRangeEnd,propertyEncode,propertyDecode} = require('./lib/key-encoding.js')
 
 let globalId = 1
-let defaultLeveldown = require('leveldown')
+let defaultLeveldown = require('memdown')
 let defaultLevelPath; {
 	let os = require('os')
 	let  pathModule = require('path')
