@@ -13,7 +13,8 @@ let defaultLevelPath; {
 const _store = Symbol()
 const _jslobPath = Symbol()
 
-
+//_JSLOB.* is the internal API. Calls are not bound to JSLOB instances, but
+//  rather expect the store and path to be passed intp the function call
 _JSLOB = {}
 _JSLOB.getStore = function _JSLOB_getStore(jslob){
 	return jslob[_store]
@@ -49,13 +50,54 @@ _JSLOB.get = async function JSLOB_get(store,path){
 	//	})
 	//return Jslob(store,path,promise)
 	}
+_JSLOB.set = function(store,path,value,stack){
+
+	switch(true){
+		// Delete / undefined case
+		case typeof value == 'undefined':
+
+			break;
+		// Some "objects" result in string/number JSON output instead of "{...}"
+		// According to the spec this is determined by checking internal slots
+		// which we can't do. So, for now I'll just check against a few known
+		// constructors. In the future, we may check a property that we make
+		// available for this purpose, e.g. obj[JSLOB.OBJECT_TYPE_SYMBOL] == 'string'
+		// https://tc39.github.io/ecma262/#sec-json.stringify
+
+		//Single value
+		case typeof value == 'string':
+		case typeof value == 'number':
+		case value === null:
+		case value instanceof String:
+		case value instanceof Date:
+		case Array.isArray(value) && value.length === 0:
+		case Object.keys(value).length === 0:
+
+			break;
+		case value instanceof Readable:
+		case value instanceof Transform:
+			return "TODO"
+			//TODO
+			break;
+		case Array.isArray(value):
+			//Iterate array and recurse
+			//Make sure to somehow check for circularities!
+
+			break;
+		default:
+			//Iterate Object.keys and recurse
+			//Make sure to somehow check for circularities!
+
+			break
+		}
+	}
 
 const proxyDef = {
 	get: /*usually async */ function get(that,prop,receiver){
 		if(typeof prop == 'symbol'){return that[prop]}
-		if(typeof that[prop] == "function"){
-			if(prop == 'then'){return that.then.bind(that)}
-			return that.then(val => val == undefined ? undefined : val[prop])
+		if(prop == 'then' && typeof that[prop] == 'function'){
+			return that.then.bind(that)
+			//return that.then(val => val == undefined ? undefined : val[prop])
 			}
 		let store = _JSLOB.getStore(that)
 		let path = _JSLOB.getPath(that).concat(prop)
@@ -64,7 +106,20 @@ const proxyDef = {
 			path,
 			_JSLOB.get(store,path)
 			)
-		}
+		},
+	// set: /*usually async */ function set(that,prop,value,receiver){
+	// 	if(typeof prop == 'symbol'){return false} //Might be allowed when mutating objects, TBD
+	// 	if(prop === 'then' && typeof that[prop] == "function"){
+	// 		return that.then.bind(that)
+	// 		}
+	// 	let store = _JSLOB.getStore(that)
+	// 	let path = _JSLOB.getPath(that).concat(prop)
+	// 	return Jslob(
+	// 		store,
+	// 		path,
+	// 		_JSLOB.set(store,path,value)
+	// 		)
+	// 	}
 	}
 function Jslob (store, path, base){
 	let jslob = base || {}
@@ -78,17 +133,22 @@ function Jslob (store, path, base){
 
 exports = module.exports = function JSLOB_Factory({
 	leveldown = defaultLeveldown,
-	levelPath = defaultLevelPath
+	levelPath = defaultLevelPath,
+	maxDepth
 	} = {})
 	{
 	//const level = require('level-packager')(leveldown)
 	//const closureStore = level(storepath)
 	const closureStore = require('level-packager')(leveldown)(levelPath)
-	const JSLOB = {}
+	const JSLOB = {
+		parse,
+		streamify,
+		stringify,
+		log
+		}
+	return JSLOB
 
-
-
-	JSLOB.parse = async function JSLOB_parse(str){
+	async function parse(str){
 		let store = closureStore
 		let id = globalId++
 		let stream
@@ -96,7 +156,7 @@ exports = module.exports = function JSLOB_Factory({
 			stream = str
 			}
 		else if (typeof str == 'string'){
-			//TODO: ^ Accept boxed strings
+			//TODO: ^ Accept boxed strings?
 			stream = new Readable
 			stream.push(str)
 			stream.push(null)
@@ -133,7 +193,7 @@ exports = module.exports = function JSLOB_Factory({
 		return jslob
 		}
 
-	JSLOB.streamify = function streamify(jslob){
+	function streamify(jslob){
 		let lastStack = []
 		let xf = new Transform({
 			objectMode: true,
@@ -192,10 +252,6 @@ exports = module.exports = function JSLOB_Factory({
 				out.push(valueJson)
 				}
 
-
-
-
-
 			{ /* this section opens object and arrays and keys */
 
 				}
@@ -214,12 +270,13 @@ exports = module.exports = function JSLOB_Factory({
 			.pipe(xf)
 		}
 
-	JSLOB.stringify = async function stringify(jslob){
+	async function stringify(jslob){
 		let out = ''
 		await streamEnd(JSLOB.streamify(jslob).on('data', str => out+=str))
 		return out
 		}
-	JSLOB.log = function(jslob,limit = 10){
+
+	function log(jslob,limit = 10){
 		let counter = 0
 		let store, path, range
 		if(jslob){

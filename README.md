@@ -2,6 +2,8 @@
 
 *JS Large OBject - The lazy way to work with JSON that won't fit in memory*
 
+JSLOB is an _almost_ drop-in replacement for JSON that does not rely on memory!
+
 **Status:** Alpha. Working but not stable.
 
 ### Usage
@@ -10,17 +12,40 @@
 const JSLOB = require('jslob')()
 
 !async function smallExample(){
+	// Just change JSON to JSLOB and add await!
 	let jslob = await JSLOB.parse('{"foo":"bar"}')
-	let output = await JSLOB.stringify(jslob)
-	console.log(output) // {"foo":"bar"}
+
+	// Such wow!
 	console.log(await jslob.foo) //bar
+
+	// Much amaze!!
+	console.log(await JSLOB.stringify(jslob)) // {"foo":"bar"}
 	}()
 
 !async function bigExample(){
-	let jslob = await JSLOB.parse(fs.createReadStream('package.json'))
+	// I can has streamz?
+	let stream = fs.createReadStream('package.json')
+	let jslob = await JSLOB.parse(stream)
+
 	console.log(await jslob.dependencies.jslob)
+
+	// Can has all the streams
 	JSLOB.streamify(jslob).on("data",chunk=>console.log(chunk))
 	}()
+```
+
+### Wait, but how?
+
+Rather than use magic, JSLOB will store your JSON key-by-key in a [level-compliant datastore](https://github.com/Level/awesome#stores).
+
+For portability, the default datastore that JSLOB uses is just an in-memory datastore, so you'll
+want to provide your own datastore as follows:
+
+```js
+// Pick one from https://github.com/Level/awesome#stores
+// const datastore = require('leveldown')
+// const datastore = require('rocksdb')
+const JSLOB = require('jslob')({leveldown: datastore})
 ```
 
 ### Features / API
