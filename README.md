@@ -1,8 +1,8 @@
 # JSLOB
 
-*JS Large OBject - The lazy way to work with JSON that won't fit in memory*
+JSLOB stands for **JS** **L**arge **OB**ject.
 
-JSLOB is an _almost_ drop-in replacement for JSON that does not rely on memory!
+It's an _almost_ drop-in replacement for JSON that does not rely on memory, which makes it useful when your JSON-powered application chokes on large inputs.
 
 **Status:** Alpha. Working but not stable.
 
@@ -36,7 +36,7 @@ const JSLOB = require('jslob')()
 
 ### Wait, but how?
 
-Rather than use magic, JSLOB will store your JSON key-by-key in a [level-compliant datastore](https://github.com/Level/awesome#stores).
+Rather than use magic, JSLOB will store your JSON data key-by-key in a [level-compliant datastore](https://github.com/Level/awesome#stores).
 
 For portability, the default datastore that JSLOB uses is just an in-memory datastore, so you'll
 want to provide your own datastore as follows:
@@ -63,3 +63,4 @@ const JSLOB = require('jslob')({leveldown: datastore})
 |GC | Automatically clean up expired objects | [Not currently  possible](https://github.com/tc39/proposal-weakrefs/issues/55) | N/A |
 |Storage | Use any leveldown-compliant storage | Untested | const JSLOB = require('jslob')({leveldown:...}) |
 |Type-mutating property re-use | The following JSON may return unexpected results | TODO | {"foo":[1],"foo":{"x":2}} |
+|Large string in JSON | Stream large string values  | TODO | ["An individual value that is too large for memory ......."] |
